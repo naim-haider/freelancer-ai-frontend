@@ -420,8 +420,9 @@ function BidInsight() {
                           <div className="text-left">
                             <div className="font-bold">{userData.username}</div>
                             <div className="text-xs opacity-75">
-                              {userData.total_bids} bids · $
-                              {userData.total_amount.toFixed(0)}
+                              {userData.total_bids} bids
+                              {/* · $
+                              {userData.total_amount.toFixed(0)} */}
                             </div>
                           </div>
                         </div>
