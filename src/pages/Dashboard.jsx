@@ -21,6 +21,13 @@ function Dashboard() {
 
   const user = JSON.parse(localStorage.getItem("freelancerUser"));
 
+  // Redirect if user is not logged in
+  useEffect(() => {
+    if (!user) {
+      navigate("/login");
+    }
+  }, [user, navigate]);
+
   useEffect(() => {
     if (autoRefreshEnabled && lastSearchQuery && !loading) {
       const interval = setInterval(() => {
@@ -210,7 +217,7 @@ function Dashboard() {
               <div className="hidden sm:flex items-center gap-2 bg-linear-to-r from-blue-50 to-indigo-50 px-4 py-2 rounded-lg border border-blue-200">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                 <span className="text-sm font-medium text-gray-700">
-                  {user.username}
+                  {user?.username || "Guest"}
                 </span>
               </div>
               <button
