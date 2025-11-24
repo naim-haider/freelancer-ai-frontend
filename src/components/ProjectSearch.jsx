@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const DEFAULT_QUERY =
   "logo design, website development, php, photoshop, wordpress, ios development, mobile app development, react native, wordpress plugin, java, python, banner design, seo, nodejs, shopify, reactjs, fullstack development, nodejs, web api, mongodb, flutter, frontend design kubernetes, figma";
@@ -24,9 +24,61 @@ function ProjectSearch({
   const [idSearchStatus, setIdSearchStatus] = useState("");
   const [idSearching, setIdSearching] = useState(false);
 
+  // Cooldown state for batch search buttons
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const cooldownTimerRef = useRef(null);
+
+  // Track last search result count
+  const [lastSearchResultCount, setLastSearchResultCount] = useState(20);
+
   useEffect(() => {
     handleSearchSubmit();
+    // Cleanup timer on unmount
+    return () => {
+      if (cooldownTimerRef.current) {
+        clearInterval(cooldownTimerRef.current);
+      }
+    };
   }, []);
+
+  // Start cooldown timer
+  const startCooldown = () => {
+    setCooldownSeconds(59);
+
+    // Clear any existing timer
+    if (cooldownTimerRef.current) {
+      clearInterval(cooldownTimerRef.current);
+    }
+
+    cooldownTimerRef.current = setInterval(() => {
+      setCooldownSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(cooldownTimerRef.current);
+          cooldownTimerRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  // Check if batch buttons are disabled due to cooldown/loading
+  const isBatchDisabled = idSearching || cooldownSeconds > 0;
+
+  // Next button is disabled if:
+  // 1. No last checked ID exists, OR
+  // 2. Currently searching, OR
+  // 3. Last search returned less than 20 projects (end reached), OR
+  // 4. Cooldown is active
+  const isNextDisabled =
+    !lastCheckedId ||
+    idSearching ||
+    lastSearchResultCount < 20 ||
+    cooldownSeconds > 0;
+
+  // Previous button uses the standard batch disabled logic
+  const isPrevDisabled =
+    !lastCheckedId || lastCheckedId <= 1 || isBatchDisabled;
 
   const handleSearchSubmit = () => {
     if (!query.trim()) return;
@@ -79,6 +131,7 @@ function ProjectSearch({
       const result = await onIdSearch({ start_id: searchId, direction });
       setCurrentStartId(result.start_id);
       setLastCheckedId(result.last_checked_id);
+      setLastSearchResultCount(result.total_found);
 
       setIdSearchStatus(
         `<strong class="text-green-600">✅ Found ${
@@ -93,6 +146,9 @@ function ProjectSearch({
           result.direction
         } • Auto-refresh: OFF</small>`
       );
+
+      // Start cooldown after successful search
+      startCooldown();
     } catch (error) {
       const errorData = error.response?.data;
       if (errorData?.last_checked_id !== undefined) {
@@ -110,6 +166,9 @@ function ProjectSearch({
           errorData?.last_checked_id || searchId
         } • Auto-refresh: OFF</small>`
       );
+
+      // Start cooldown even on error to prevent spam
+      startCooldown();
     } finally {
       setIdSearching(false);
     }
@@ -134,6 +193,7 @@ function ProjectSearch({
       );
       setCurrentStartId(inputValue);
       setLastCheckedId(inputValue);
+      setLastSearchResultCount(1);
     } catch (error) {
       setIdSearchStatus(
         `<span class="text-red-600">❌ ${
@@ -141,9 +201,15 @@ function ProjectSearch({
         }</span>
         <br><small class="text-gray-500">Project ID ${inputValue} does not exist or is not accessible</small>`
       );
+      setLastSearchResultCount(0);
     } finally {
       setIdSearching(false);
     }
+  };
+
+  // Format cooldown display
+  const formatCooldown = (seconds) => {
+    return `${seconds}s`;
   };
 
   return (
@@ -171,6 +237,26 @@ function ProjectSearch({
             Find projects by ID or keywords
           </p>
         </div>
+
+        {/* Cooldown Badge */}
+        {cooldownSeconds > 0 && (
+          <div className="ml-auto flex items-center gap-2 bg-amber-100 text-amber-800 px-3 py-1.5 rounded-full text-sm font-medium">
+            <svg
+              className="w-4 h-4 animate-pulse"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            Cooldown: {formatCooldown(cooldownSeconds)}
+          </div>
+        )}
       </div>
 
       {/* ID Search Section */}
@@ -180,7 +266,7 @@ function ProjectSearch({
             type="number"
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && handleIdSearchAction("ok")}
+            onKeyPress={(e) => e.key === "Enter" && handleSingleSearch()}
             placeholder="Enter Project ID (e.g., 123456)"
             min="1"
             className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-200 focus:outline-none transition-all"
@@ -208,11 +294,11 @@ function ProjectSearch({
           </button>
         </div>
 
-        {/* Navigation Buttons */}
+        {/* Navigation Buttons with Cooldown */}
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => handleIdSearchAction("prev")}
-            disabled={!lastCheckedId || lastCheckedId <= 1 || idSearching}
+            disabled={isPrevDisabled}
             className="flex-1 sm:flex-none bg-linear-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 disabled:from-gray-300 disabled:to-gray-400 text-white px-5 py-2.5 rounded-xl font-medium transition-all duration-200 shadow-md hover:shadow-lg disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <svg
@@ -228,38 +314,104 @@ function ProjectSearch({
                 d="M15 19l-7-7 7-7"
               />
             </svg>
-            Previous 20
+            {cooldownSeconds > 0
+              ? `Previous (${cooldownSeconds}s)`
+              : "Previous 20"}
           </button>
 
           <button
             onClick={() => handleIdSearchAction("ok")}
-            disabled={idSearching}
-            className="flex-1 sm:flex-none bg-linear-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 disabled:from-gray-300 disabled:to-gray-400 text-white px-6 py-2.5 rounded-xl font-medium transition-all duration-200 shadow-md hover:shadow-lg disabled:cursor-not-allowed"
+            disabled={isBatchDisabled}
+            className="flex-1 sm:flex-none bg-linear-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 disabled:from-gray-300 disabled:to-gray-400 text-white px-6 py-2.5 rounded-xl font-medium transition-all duration-200 shadow-md hover:shadow-lg disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {idSearching ? "Loading..." : "Get 20 Projects"}
+            {idSearching ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                Loading...
+              </>
+            ) : cooldownSeconds > 0 ? (
+              <>
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                Wait {cooldownSeconds}s
+              </>
+            ) : (
+              "Get 20 Projects"
+            )}
           </button>
 
           <button
             onClick={() => handleIdSearchAction("next")}
-            disabled={!lastCheckedId || idSearching}
+            disabled={isNextDisabled || cooldownSeconds > 0}
+            title={
+              lastSearchResultCount < 20 && lastSearchResultCount > 0
+                ? "No more projects available - last search returned less than 20 results"
+                : cooldownSeconds > 0
+                ? `Wait ${cooldownSeconds}s`
+                : ""
+            }
             className="flex-1 sm:flex-none bg-linear-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 disabled:from-gray-300 disabled:to-gray-400 text-white px-5 py-2.5 rounded-xl font-medium transition-all duration-200 shadow-md hover:shadow-lg disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            Next 20
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
+            {cooldownSeconds > 0 ? (
+              `Next (${cooldownSeconds}s)`
+            ) : lastSearchResultCount < 20 && lastSearchResultCount > 0 ? (
+              <>
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                  />
+                </svg>
+                End Reached
+              </>
+            ) : (
+              <>
+                Next 20
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 5l7 7-7 7"
+                  />
+                </svg>
+              </>
+            )}
           </button>
         </div>
+
+        {/* Cooldown Progress Bar */}
+        {cooldownSeconds > 0 && (
+          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-linear-to-r from-amber-400 to-orange-500 h-2 rounded-full transition-all duration-1000 ease-linear"
+              style={{ width: `${(cooldownSeconds / 59) * 100}%` }}
+            />
+          </div>
+        )}
 
         {/* Status Message */}
         {idSearchStatus && (
@@ -294,29 +446,35 @@ function ProjectSearch({
                   <span className="text-emerald-600 font-bold shrink-0">
                     🔍 Search:
                   </span>
-                  <span>Fetch the exact project with entered ID</span>
+                  <span>
+                    Fetch the exact project with entered ID (no cooldown)
+                  </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-indigo-600 font-bold shrink-0">
                     📋 Get 20:
                   </span>
-                  <span>
-                    Search forward from entered ID (max 50 IDs checked)
-                  </span>
+                  <span>Search forward from entered ID (59s cooldown)</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-600 font-bold shrink-0">
                     ⏮️ Previous:
                   </span>
-                  <span>Search backward from last checked ID</span>
+                  <span>
+                    Search backward from last checked ID (59s cooldown)
+                  </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-600 font-bold shrink-0">
                     ⏭️ Next:
                   </span>
-                  <span>Continue searching forward from last checked ID</span>
+                  <span>Continue searching forward (59s cooldown)</span>
                 </li>
               </ul>
+              <p className="text-xs text-amber-700 mt-3 bg-amber-50 p-2 rounded-lg">
+                ⚠️ <strong>Rate Limit Protection:</strong> Batch search buttons
+                have a 59-second cooldown to prevent API rate limiting.
+              </p>
             </div>
           </div>
         </div>
@@ -324,7 +482,7 @@ function ProjectSearch({
         {/* Debug Info - Collapsible */}
         <details className="bg-gray-50 rounded-xl border border-gray-200">
           <summary className="px-4 py-3 cursor-pointer font-medium text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
-            🔧 Debug Information
+            🔧 Search Information
           </summary>
           <div className="px-4 py-3 text-xs font-mono space-y-1 text-gray-600 border-t border-gray-200">
             <div>
@@ -339,6 +497,20 @@ function ProjectSearch({
             <div>
               <strong>Direction:</strong> {lastSearchDirection}
             </div>
+            <div>
+              <strong>Cooldown:</strong> {cooldownSeconds}s remaining
+            </div>
+            {/* <div>
+              <strong>Last Result Count:</strong> {lastSearchResultCount}{" "}
+              projects
+            </div> */}
+            {/* <div>
+              <strong>Next Button Status:</strong>{" "}
+              {isNextDisabled ? "Disabled" : "Enabled"}
+              {lastSearchResultCount < 20 && lastSearchResultCount > 0
+                ? " (< 20 results)"
+                : ""}
+            </div> */}
             <div>
               <strong>Next will search from:</strong>{" "}
               {lastCheckedId ? lastCheckedId + 1 : "N/A"}
